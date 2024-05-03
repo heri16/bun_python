@@ -20,6 +20,41 @@ export const SYMBOLS = {
     returns: FFIType.void,
   },
 
+  // Used BEFORE calling into Python (from JS)
+  // See: https://docs.python.org/3/c-api/init.html#non-python-created-threads
+  PyGILState_Ensure: {
+    args: [],
+    returns: FFIType.pointer,
+  },
+
+  // Used AFTER calling into Python (from JS)
+  // See: https://docs.python.org/3/c-api/init.html#non-python-created-threads
+  PyGILState_Release: {
+    args: [FFIType.pointer],
+    returns: FFIType.void,
+  },
+
+  // Check if the current thread is holding the GIL
+  // See: https://docs.python.org/3/c-api/init.html#c.PyGILState_Check
+  PyGILState_Check: {
+    args: [],
+    returns: INT,
+  },
+
+  // Used BEFORE calling from Python (into JSCallback)
+  // See: https://docs.python.org/3/c-api/init.html#releasing-the-gil-from-extension-code
+  PyEval_SaveThread: {
+    args: [],
+    returns: FFIType.pointer,
+  },
+
+  // Used AFTER calling from Python (into JSCallback)
+  // See: https://docs.python.org/3/c-api/init.html#releasing-the-gil-from-extension-code
+  PyEval_RestoreThread: {
+    args: [FFIType.pointer],
+    returns: FFIType.void,
+  },
+
   Py_IncRef: {
     args: [FFIType.pointer],
     returns: FFIType.void,
