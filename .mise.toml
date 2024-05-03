@@ -1,0 +1,9 @@
+[tools]
+bun = "latest"
+python = ["3.11", "3.10"]
+
+[env]
+_.source = ".env.sh"
+
+[settings]
+experimental = true
