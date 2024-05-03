@@ -2,9 +2,22 @@ import { FFIType, JSCallback, Pointer, ptr } from "bun:ffi";
 import { readdirSync } from "node:fs";
 import { type } from "node:os";
 import { join } from "node:path";
-import { py } from "./ffi";
+import { py as py_unsafe } from "./ffi";
+import { type SYMBOLS } from "./symbols";
 import { LONG_MAXIMUM, LONG_MINIMUM } from "./symbols";
 import { SliceItemRegExp, cstr } from "./util";
+
+/**
+ * Wrap py functions so they automatically acquire & release
+ * the Python Global Interpreter Lock.
+ */
+const py_entries = Object.entries(py_unsafe).map(([ key, func ]) => {
+  if (key.startsWith('Py_Initialize') || key.startsWith('PyGILState_') || key.startsWith('PyEval_')) {
+    return [ key as keyof SYMBOLS, func ]
+  }
+  return [ key as keyof SYMBOLS, wrapFunction(func) ]
+});
+const py = Object.assign({...py_unsafe}, Object.fromEntries(py_entries)) as typeof py_unsafe;
 
 const refregistry = new FinalizationRegistry<Pointer>(py.Py_DecRef);
 
@@ -144,7 +157,12 @@ export class Callback {
   constructor(public callback: PythonJSCallback) {
     this.unsafe = new JSCallback(
       (_, args: Pointer, kwargs: Pointer) => {
-        return PyObject.from(
+        // BEFORE calling from Python (into JSCallback)
+        const hasGIL = !!py.PyGILState_Check();
+        const _save = hasGIL ? py.PyEval_SaveThread() : null;
+        if (hasGIL && _save === null) { maybeThrowError(); }
+
+        const handle = PyObject.from(
           this.callback(
             kwargs === null
               ? {}
@@ -152,6 +170,10 @@ export class Callback {
             ...(args === null ? [] : new PyObject(args).valueOf())
           )
         ).handle;
+
+        // AFTER calling from Python (into JSCallback)
+        if (_save) { py.PyEval_RestoreThread(_save); }
+        return handle;
       },
       {
         args: [FFIType.pointer, FFIType.pointer, FFIType.pointer],
@@ -797,9 +819,32 @@ export function maybeThrowError() {
 }
 
 /**
+ * Wraps a function so that Python GIL can be ensured and released
+ */
+export function wrapFunction<T extends (...args: any[]) => any>(func: T): (...args: Parameters<T>) => ReturnType<T> {
+  return (...args: Parameters<T>): ReturnType<T> => {
+    if (py.PyGILState_Check()) {
+      return func(...args);
+    }
+    // BEFORE calling into Python (from JS)
+    const gstate = py.PyGILState_Ensure();
+    if (gstate === null) { maybeThrowError(); }
+    try {
+      return func(...args);
+    } finally {
+      // AFTER calling into Python (from JS)
+      py.PyGILState_Release(gstate);
+    }
+  }
+}
+
+/**
  * Python interface. Do not construct directly, use `python` instead.
  */
 export class Python {
+  /** Python `PyThreadState` pointer */
+  _save: Pointer;
+
   /** Built-ins module. */
   builtins: any;
   /** Python `bool` class proxied object */
@@ -835,6 +880,13 @@ export class Python {
     // }
     // console.log('here')
     py.Py_Initialize();
+    const _save = py.PyEval_SaveThread();
+    if (_save === null) {
+      throw new Error('Failed to release Global Interpreter Lock');
+    } else {
+      this._save = _save;
+    }
+
     this.builtins = this.import("builtins");
 
     this.int = this.builtins.int;
