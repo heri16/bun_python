@@ -11,13 +11,20 @@ import { SliceItemRegExp, cstr } from "./util";
  * Wrap py functions so they automatically acquire & release
  * the Python Global Interpreter Lock.
  */
-const py_entries = Object.entries(py_unsafe).map(([ key, func ]) => {
-  if (key.startsWith('Py_Initialize') || key.startsWith('PyGILState_') || key.startsWith('PyEval_')) {
-    return [ key as keyof SYMBOLS, func ]
+const py_entries = Object.entries(py_unsafe).map(([key, func]) => {
+  if (
+    key.startsWith("Py_Initialize") ||
+    key.startsWith("PyGILState_") ||
+    key.startsWith("PyEval_")
+  ) {
+    return [key as keyof SYMBOLS, func];
   }
-  return [ key as keyof SYMBOLS, wrapFunction(func) ]
+  return [key as keyof SYMBOLS, wrapFunction(func)];
 });
-const py = Object.assign({...py_unsafe}, Object.fromEntries(py_entries)) as typeof py_unsafe;
+const py = Object.assign(
+  { ...py_unsafe },
+  Object.fromEntries(py_entries)
+) as typeof py_unsafe;
 
 const refregistry = new FinalizationRegistry<Pointer>(py.Py_DecRef);
 
@@ -160,7 +167,9 @@ export class Callback {
         // BEFORE calling from Python (into JSCallback)
         const hasGIL = !!py.PyGILState_Check();
         const threadState = hasGIL ? py.PyEval_SaveThread() : null;
-        if (hasGIL && threadState === null) { maybeThrowError(); }
+        if (hasGIL && threadState === null) {
+          maybeThrowError();
+        }
 
         const handle = PyObject.from(
           this.callback(
@@ -172,7 +181,9 @@ export class Callback {
         ).handle;
 
         // AFTER calling from Python (into JSCallback)
-        if (threadState) { py.PyEval_RestoreThread(threadState); }
+        if (threadState) {
+          py.PyEval_RestoreThread(threadState);
+        }
         return handle;
       },
       {
@@ -210,6 +221,12 @@ export class Callback {
  * C PyObject.
  */
 export class PyObject {
+  /**
+   * A Python callabale object as Uint8Array
+   * This is used with `PyCFunction_NewEx` in order to extend its liftime and not allow v8 to release it before its actually used
+   */
+  #pyMethodDef?: Uint8Array;
+
   constructor(public handle: Pointer | null) {
     if (handle === 0) this.handle = null as never;
   }
@@ -463,8 +480,8 @@ export class PyObject {
           }
           return new PyObject(list);
         } else if (v instanceof Callback) {
-          const struct = new Uint8Array(8 + 8 + 4 + 8);
-          const view = new DataView(struct.buffer);
+          const pyMethodDef = new Uint8Array(8 + 8 + 4 + 8);
+          const view = new DataView(pyMethodDef.buffer);
           const LE =
             new Uint8Array(new Uint32Array([0x12345678]).buffer)[0] !== 0x7;
           const nameBuf = new TextEncoder().encode(
@@ -475,8 +492,13 @@ export class PyObject {
           view.setBigUint64(8, BigInt(v.unsafe.ptr ?? 0), LE);
           view.setInt32(16, 0x1 | 0x2, LE);
           view.setBigUint64(20, BigInt(namePtr), LE);
-          const fn = py.PyCFunction_New(struct, PyObject.from(null).handle);
-          return new PyObject(fn);
+          const fn = py.PyCFunction_New(
+            pyMethodDef,
+            PyObject.from(null).handle
+          );
+          const obj = new PyObject(fn);
+          obj.#pyMethodDef = pyMethodDef;
+          return obj;
         } else if (v instanceof PyObject) {
           return v;
         } else if (v instanceof Set) {
@@ -821,21 +843,25 @@ export function maybeThrowError() {
 /**
  * Wraps a function so that Python GIL can be ensured and released
  */
-export function wrapFunction<T extends (...args: any[]) => any>(func: T): (...args: Parameters<T>) => ReturnType<T> {
+export function wrapFunction<T extends (...args: any[]) => any>(
+  func: T
+): (...args: Parameters<T>) => ReturnType<T> {
   return (...args: Parameters<T>): ReturnType<T> => {
     if (py.PyGILState_Check()) {
       return func(...args);
     }
     // BEFORE calling into Python (from JS)
     const gstate = py.PyGILState_Ensure();
-    if (gstate === null) { maybeThrowError(); }
+    if (gstate === null) {
+      maybeThrowError();
+    }
     try {
       return func(...args);
     } finally {
       // AFTER calling into Python (from JS)
       py.PyGILState_Release(gstate);
     }
-  }
+  };
 }
 
 /**
@@ -882,7 +908,7 @@ export class Python {
     py.Py_Initialize();
     const threadState = py.PyEval_SaveThread();
     if (threadState === null) {
-      throw new Error('Failed to release Global Interpreter Lock');
+      throw new Error("Failed to release Global Interpreter Lock");
     } else {
       this.#threadState = threadState;
     }
