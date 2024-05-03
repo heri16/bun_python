@@ -159,8 +159,8 @@ export class Callback {
       (_, args: Pointer, kwargs: Pointer) => {
         // BEFORE calling from Python (into JSCallback)
         const hasGIL = !!py.PyGILState_Check();
-        const _save = hasGIL ? py.PyEval_SaveThread() : null;
-        if (hasGIL && _save === null) { maybeThrowError(); }
+        const threadState = hasGIL ? py.PyEval_SaveThread() : null;
+        if (hasGIL && threadState === null) { maybeThrowError(); }
 
         const handle = PyObject.from(
           this.callback(
@@ -172,7 +172,7 @@ export class Callback {
         ).handle;
 
         // AFTER calling from Python (into JSCallback)
-        if (_save) { py.PyEval_RestoreThread(_save); }
+        if (threadState) { py.PyEval_RestoreThread(threadState); }
         return handle;
       },
       {
@@ -843,7 +843,7 @@ export function wrapFunction<T extends (...args: any[]) => any>(func: T): (...ar
  */
 export class Python {
   /** Python `PyThreadState` pointer */
-  _save: Pointer;
+  #threadState: Pointer;
 
   /** Built-ins module. */
   builtins: any;
@@ -880,11 +880,11 @@ export class Python {
     // }
     // console.log('here')
     py.Py_Initialize();
-    const _save = py.PyEval_SaveThread();
-    if (_save === null) {
+    const threadState = py.PyEval_SaveThread();
+    if (threadState === null) {
       throw new Error('Failed to release Global Interpreter Lock');
     } else {
-      this._save = _save;
+      this.#threadState = threadState;
     }
 
     this.builtins = this.import("builtins");
