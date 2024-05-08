@@ -195,8 +195,8 @@ export class Callback {
   }
 
   destroy() {
-    this.unsafe.close();
     delete this[ProxiedPyObject];
+    this.unsafe.close();
   }
 }
 
