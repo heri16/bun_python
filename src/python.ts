@@ -159,6 +159,7 @@ export function kw(
  * ```
  */
 export class Callback {
+  [ProxiedPyObject]?: PyObject;
   unsafe;
 
   constructor(public callback: PythonJSCallback) {
@@ -194,6 +195,7 @@ export class Callback {
   }
 
   destroy() {
+    delete this[ProxiedPyObject];
     this.unsafe.close();
   }
 }
@@ -480,6 +482,9 @@ export class PyObject {
           }
           return new PyObject(list);
         } else if (v instanceof Callback) {
+          if (v[ProxiedPyObject]) {
+            return v[ProxiedPyObject];
+          }
           const pyMethodDef = new Uint8Array(8 + 8 + 4 + 8);
           const view = new DataView(pyMethodDef.buffer);
           const LE =
@@ -498,6 +503,7 @@ export class PyObject {
           );
           const obj = new PyObject(fn);
           obj.#pyMethodDef = pyMethodDef;
+          v[ProxiedPyObject] = obj;
           return obj;
         } else if (v instanceof PyObject) {
           return v;
